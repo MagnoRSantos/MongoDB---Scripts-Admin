@@ -1,0 +1,104 @@
+
+Esse documento tem por finalidade demonstrar como como criar e configurar o script shell no ambiente Ubuntu Linux que irá verificar o status do serviço do MongoDB (serviço mongod).
+
+Ele irá verificar se o mesmo está em execução "active (running)" e caso não esteja irá executar o comando de inicialização do serviço e enviará um e-mail ao responsável informando a situação, o e-mail será enviado pelo serviço SendGrid.
+
+1 - No terminal do Linux digite o comando abaixo para acessar o diretório /etc:
+> cd /etc
+
+2 - No terminal digite o comando abaixo para criar o arquivo "verifica_status_mongodb.sh":
+> sudo nano verifica_status_mongodb.sh
+
+3 - Abaixo estão os comandos em shell script a serem inseridos no arquivo "verifica_status_mongodb.sh" criado:
+
+
+#!/bin/bash
+
+## https://stackoverflow.com/questions/36263335/how-to-check-whether-mongodb-is-running-from-a-shell-script
+## https://gist.github.com/velizarn/0c5c8bf19caaa316b2c0f4a0057178d0
+## https://docs.sendgrid.com/for-developers/sending-email/curl-examples
+
+
+##Gera um arquivo de log para cada execução
+#DTHR=`date +%F-%T`
+#exec > /var/log/verifica_status_mongodb/log_status_mongodb_$DTHR.txt
+
+
+##Gera somente um arquivo de log e adiciona log sem apagar anterior
+exec >> /var/log/verifica_status_mongodb/log_status_mongodb.log
+
+
+##Variaveis SendGrid
+SENDGRID_API_KEY="XXXXXXXXXXXXXXXXXXXX.YYYYYYYYYYYYYYYYYYY"
+EMAIL_TO1="email.dba1@email.com"
+EMAIL_TO2="email.dba2@email.com"
+FROM_EMAIL="email@emitente.com"
+FROM_NAME="email@emitente.com"
+SUBJECT="Server: $HOSTNAME | Verificação - Status de Serviço MongoDB"
+bodyHTML="<p>Server: $HOSTNAME<br>Email enviado do script de verificação do serviço mongodb.<br>O serviço estava parado e foi iniciado.</p>"
+maildata='{"personalizations": [{"to": [{"email": "'${EMAIL_TO1}'"}, {"email": "'${EMAIL_TO2}'"}]}],"from": {"email": "'${FROM_EMAIL}'", 
+	"name": "'${FROM_NAME}'"},"subject": "'${SUBJECT}'","content": [{"type": "text/html", "value": "'${bodyHTML}'"}]}'
+
+
+
+
+#Verifica status do serviço
+mongod_status=`systemctl status mongod`
+#echo "${mongod_status}"
+
+
+if [[ "${mongod_status}" != *"active (running)"* ]]
+then
+	echo "=========================================================="
+	echo ""
+	
+	DTHR=`date +%F-%T`	
+	echo $DTHR" - MongoDB está parado."	
+	echo $DTHR" - Iniciando MongoDB."
+	
+	#Inicia serviço mongodb
+	sudo systemctl start mongod
+	
+	#Verifica e exibe status do serviço	
+	mongod_status=`systemctl status mongod`
+	echo "${mongod_status}"
+	echo ""
+	
+	#envia email
+	curl 	--request POST \
+			--url https://api.sendgrid.com/v3/mail/send \
+			--header 'Authorization: Bearer '$SENDGRID_API_KEY \
+			--header 'Content-Type: application/json' \
+			--data "$maildata"
+
+
+	echo "=========================================================="
+	echo ""
+fi
+
+
+Após inserir o script acima, salve o arquivo "verifica_status_mongodb.sh" no editor nano tecle CTRL+O e depois CTRL+X.
+4 - Aplicar permissão de execução no arquivo "verifica_status_mongodb.sh".
+> sudo chmod +x verifica_status_mongodb.sh
+
+
+5 - Criar a pasta de logs de execução do script e aplicar as permissões:
+> sudo mkdir /var/log/verifica_status_mongodb
+> sudo chmod 775 /var/log/verifica_status_mongodb/
+> sudo chmod 775 /var/log/verifica_status_mongodb/*
+
+
+6 - Após será necessário agendar execução do script pelo crontab no Linux, no terminal digite:
+> sudo crontab -e
+
+
+Script a ser salvo no crontab:
+##roda a cada 2 minutos
+*/2 * * * * /etc/verifica_status_mongodb.sh
+
+Para salvar tecle CTRL+O e depois CTRL+X (caso esteja usando o editor nano).
+
+
+Com o procedimento descrito acima a cada 2 minutos o script irá rodar conforme o agendamento feito no crontab e irá verificar o status do serviço do mongodb, caso o serviço não esteja em execução irá ser executado o comando de inicialização do serviço no Linux e enviará um e-mail a quem esteja responsável pelo banco de dados informando que o serviço estava parado e foi iniciado.
+
+
