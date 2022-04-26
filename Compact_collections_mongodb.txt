@@ -1,0 +1,115 @@
+O MongoDB a partir da versão 3.2 utiliza o mecanismo de armazenamento WiredTiger que por padrão usa a biblioteca de compactação/descompactação snappy.
+
+Se quisermos liberar espaço disponível na coleção para o Sistema Operacional é preciso executar o procedimento de compactação na coleção por meio do comando compact.
+
+Para ambientes com replicaset é necessário e recomendável primeiro executar a compactação nos secundários e depois executar no primário.
+Até a versão 4.2 do MongoDB para executar o compact no primário (Primary) do replicaset o banco de dados bloqueia todas as operações.
+A partir do MongoDB 4.4 o comando compact não bloqueia as operações CRUD do MongoDB no banco de dados que está compactando.
+
+Realizar a compactação das bases em ambientes de replicaset no MongoDB
+
+1 - Conecte individualmente em cada membro secundário do replicaset "um por vez" pois o membro fica com status RECOVERING no secundário enquanto está compactando uma base de dados.
+StringConnection de membro secundário individualmente:
+## (MongoShell "mongosh" Atual)
+> mongosh "mongodb://username:password@10.1.1.2:27017/admin?directConnection=true"
+
+ou
+
+## (MongoShell "mongo" Legado)
+> mongo "mongodb://username:password@10.1.1.2:27017/admin?directConnection=true"
+
+
+2 - Após conectado ao membro secundário do replicaset conecte na base que deseja compactar:
+> use db_EEEEE
+
+Exemplo: database db_01234:
+> use db_01234
+
+
+3 - Após conectado a base execute o comando de compactação da coleção, neste exemplo será usado a coleção "Import":
+> db.runCommand({compact: 'Import'});
+
+Obs.: Caso queria pode usar o comando abaixo que já define o database a ser executado a compactação:
+> db.getSiblingDB('db_EEEEE').runCommand({ compact: 'Import' });
+
+
+4 - Realize o mesmo procedimento em cada membro sencundário do replicaset um por vez, não execute em mais de um enquanto um membro estiver no processo de compactação.
+
+
+5 - Concluído o processo de compactação em todos os membros secundários podemos passar para execução no primário:
+Atenção esse item 5 de compactação direta no primário causa bloqueio de acesso à base de dados em compactação, recomenda-se seguir para o passo 6 afim de evitar tempo de inatividade do banco de dados, item criado para conhecimento apenas.
+
+Execução direta no primário:
+a - Conectar por meio de stringConnection no primário (Item 1).
+b - Conectar no base de dados desejada:
+> use db_EEEEE
+
+c - Comando de compactação no primário:
+Parâmetro force ("force" veja aqui)
+> db.runCommand({compact: 'Import', force: true});
+
+ou
+
+> db.getSiblingDB('db_EEEEE').runCommand({ compact: 'Import', force: true });
+
+
+6 - Para evitar tempo de inatividade na base de dados que está em compactação recomenda-se usar os membros do replicaset alterando o primário para secundário e com isso um dos secundários assume como primário.
+Procedimentos abaixo:
+a - Execute o comando abaixo em um dos secundários que deseja que não assuma como primário por um certo período de tempo:
+No exemplo temos 3 membros do replicaset, são eles:
+
+SRVMONGO010 (Primary)
+SRVMONGO011 (Secondary)
+SRVMONGO012 (Secondary)
+
+b - Execute o comando a seguir para impedir o SRVMONGO012 "secondary" de assumir como Primário:
+Obs.: Deve-se estar conectado diretamente no SRVMONGO012 usando connectionstring de conexão individual no secundário:
+StringConnection de membro secundário individualmente:
+
+## (MongoShell "mongosh" Atual)
+mongosh "mongodb://username:password@10.1.1.2:27017/admin?directConnection=true"
+
+ou
+
+## (MongoShell "mongo" Legado)
+mongo "mongodb://username:password@10.1.1.2:27017/admin?directConnection=true"
+Após conectado diretamente no secundário execute o comando abaixo:
+
+## impede um secundário de assumir como primário por 120 segundo
+> rs.freeze(120);
+
+c - Após isso conecte no replicaset geral e execute o comando abaixo:
+Obs.: String de conexão no replicaset geral
+## (MongoShell "mongosh" Atual)
+mongosh "mongodb://username:password@10.1.1.0:27017,10.1.1.1:27017,10.1.1.2:27017/admin?directConnection=true"
+
+ou
+
+## (MongoShell "mongo" Legado)
+mongo "mongodb://username:password@10.1.1.0:27017,10.1.1.1:27017,10.1.1.2:27017/admin?directConnection=true" 
+
+
+Após conectado ao replicaset execute o comando abaixo para forçar o primário a assumir como secundário e com isso um membro secundário é eleito para assumir como primário:
+
+## baixa o primário para secundário e o impede de assumir o primário por 600 segundos
+> db.adminCommand( { replSetStepDown: 600 } );
+
+d - Após o primário assumir como secundário execute o comando de compactação na base de dados desejada:
+> use db_EEEEE;
+
+> db.runCommand({compact: 'Import'});
+
+Obs.: Caso queria pode usar o comando abaixo que já define o database a ser executado a compactação:
+> db.getSiblingDB('db_EEEEE').runCommand({ compact: 'Import' });
+
+
+Assim que a compactação concluir o servidor assume como primário novamente, pois ocorre uma eleição conforme a prioridade de cada membro do replicaset.
+Dessa forma não temos tempo de inatividade de acesso à base de dados.
+
+
+Fontes:
+Mongoshell: https://docs.mongodb.com/mongodb-shell/
+Mongoshell Legado: https://docs.mongodb.com/v4.4/reference/program/mongo/#mongodb-binary-bin.mongo
+Compact: https://docs.mongodb.com/manual/reference/command/compact/
+rs.freeze(): https://docs.mongodb.com/manual/reference/method/rs.freeze/
+replSetStepDown: https://docs.mongodb.com/manual/reference/command/replSetStepDown/
